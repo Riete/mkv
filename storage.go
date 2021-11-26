@@ -15,9 +15,9 @@ var (
 var defaultStorage = NewKVStorage(defaultTTL)
 
 type Storage interface {
-	Get(key string) (string, error)
+	Get(key string) (interface{}, error)
 	Delete(key string)
-	Set(key string, value string)
+	Set(key string, value interface{})
 	SetNX(key string) bool
 }
 
@@ -27,11 +27,11 @@ type storage struct {
 }
 
 type value struct {
-	data    string
+	data    interface{}
 	setTime time.Time
 }
 
-func (s *storage) Get(k string) (string, error) {
+func (s *storage) Get(k string) (interface{}, error) {
 	v, ok := s.storage.Load(k)
 	if !ok {
 		return "", keyNotExitError
@@ -48,7 +48,7 @@ func (s *storage) Delete(k string) {
 	s.storage.Delete(k)
 }
 
-func (s *storage) Set(k string, v string) {
+func (s *storage) Set(k string, v interface{}) {
 	d := value{data: v, setTime: time.Now()}
 	s.storage.Store(k, d)
 }
