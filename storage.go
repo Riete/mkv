@@ -9,12 +9,11 @@ import (
 var (
 	defaultTTL      = 5 * time.Minute
 	keyNotExitError = errors.New("key is not exist")
-	keyExpiredError = errors.New("key is expired")
 )
 
 var defaultStorage = NewKVStorage(defaultTTL)
 
-type Storage interface {
+type KVStorage interface {
 	Get(key string) (interface{}, error)
 	Delete(key string)
 	Set(key string, value interface{})
@@ -27,8 +26,21 @@ type storage struct {
 }
 
 type value struct {
-	data    interface{}
-	setTime time.Time
+	data  interface{}
+	ctime time.Time
+}
+
+func (s *storage) clean() {
+	for {
+		time.Sleep(s.ttl)
+		s.storage.Range(func(k, v interface{}) bool {
+			d := v.(value)
+			if time.Now().Second()-d.ctime.Second() > int(s.ttl.Seconds()) {
+				s.storage.Delete(k)
+			}
+			return true
+		})
+	}
 }
 
 func (s *storage) Get(k string) (interface{}, error) {
@@ -37,10 +49,6 @@ func (s *storage) Get(k string) (interface{}, error) {
 		return "", keyNotExitError
 	}
 	d := v.(value)
-	if time.Now().Second()-d.setTime.Second() > int(s.ttl.Seconds()) {
-		s.Delete(k)
-		return "", keyExpiredError
-	}
 	return d.data, nil
 }
 
@@ -49,16 +57,18 @@ func (s *storage) Delete(k string) {
 }
 
 func (s *storage) Set(k string, v interface{}) {
-	d := value{data: v, setTime: time.Now()}
+	d := value{data: v, ctime: time.Now()}
 	s.storage.Store(k, d)
 }
 
 func (s *storage) SetNX(k string) bool {
-	d := value{data: "", setTime: time.Now()}
+	d := value{data: "", ctime: time.Now()}
 	_, loaded := s.storage.LoadOrStore(k, d)
 	return !loaded
 }
 
-func NewKVStorage(ttl time.Duration) Storage {
-	return &storage{ttl: ttl}
+func NewKVStorage(ttl time.Duration) KVStorage {
+	s := &storage{ttl: ttl}
+	go s.clean()
+	return s
 }
