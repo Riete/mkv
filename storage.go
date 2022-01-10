@@ -74,7 +74,7 @@ func (s *storage) Delete(k string) {
 }
 
 func (s *storage) Set(k string, v interface{}) {
-	d := &value{data: v, etime: time.Now().Add(defaultTTL)}
+	d := &value{data: v, etime: time.Now().Add(s.ttl)}
 	s.storage.Store(k, d)
 }
 
