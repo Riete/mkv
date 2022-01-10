@@ -39,7 +39,7 @@ func (s *storage) clean() {
 	for {
 		time.Sleep(s.ttl)
 		s.storage.Range(func(k, v interface{}) bool {
-			d := v.(value)
+			d := v.(*value)
 			if time.Now().After(d.etime) {
 				s.storage.Delete(k)
 			}
