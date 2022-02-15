@@ -2,6 +2,7 @@ package mkv
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -32,17 +33,36 @@ type storage struct {
 	cq      chan clean
 }
 
+var (
+	version = map[string]int64{}
+	rw      sync.RWMutex
+)
+
 func (s *storage) clean() {
 	for c := range s.cq {
 		select {
 		case <-time.After(c.etime.Sub(time.Now())):
+			fmt.Println(c.key)
 			s.Delete(c.key)
 		}
 	}
 }
 
+func (s *storage) keyForGet(k string) string {
+	rw.RLock()
+	defer rw.RUnlock()
+	return fmt.Sprintf("%s-%d", k, version[k])
+}
+
+func (s *storage) keyForSet(k string) string {
+	rw.Lock()
+	defer rw.Unlock()
+	version[k] = version[k] + 1
+	return fmt.Sprintf("%s-%d", k, version[k])
+}
+
 func (s *storage) get(k string) (interface{}, error) {
-	v, ok := s.storage.Load(k)
+	v, ok := s.storage.Load(s.keyForGet(k))
 	if !ok {
 		return nil, keyNotExitError
 	}
@@ -50,11 +70,7 @@ func (s *storage) get(k string) (interface{}, error) {
 }
 
 func (s *storage) Get(k string) (interface{}, error) {
-	if v, err := s.get(k); err != nil {
-		return nil, err
-	} else {
-		return v, nil
-	}
+	return s.get(k)
 }
 
 func (s *storage) Delete(k string) {
@@ -65,22 +81,29 @@ func (s *storage) addToClean(key string, etime time.Time) {
 	s.cq <- clean{key: key, etime: etime}
 }
 
+func (s *storage) set(k string, v interface{}) string {
+	key := s.keyForSet(k)
+	s.storage.Store(key, v)
+	return key
+}
+
 func (s *storage) Set(k string, v interface{}) {
-	s.storage.Store(k, v)
-	go s.addToClean(k, time.Now().Add(s.ttl))
+	key := s.set(k, v)
+	go s.addToClean(key, time.Now().Add(s.ttl))
 }
 
 func (s *storage) SetWithExTime(k string, v interface{}, ttl time.Duration) {
-	s.storage.Store(k, v)
-	go s.addToClean(k, time.Now().Add(ttl))
+	key := s.set(k, v)
+	go s.addToClean(key, time.Now().Add(ttl))
 }
 
 func (s *storage) SetIfNotExist(k string, v interface{}) bool {
-	_, loaded := s.storage.LoadOrStore(k, v)
-	if !loaded {
-		go s.addToClean(k, time.Now().Add(s.ttl))
+	if _, err := s.Get(k); err != nil {
+		s.Set(k, v)
+		return true
+	} else {
+		return false
 	}
-	return !loaded
 }
 
 func NewKVStorage(ttl time.Duration) KVStorage {
