@@ -42,7 +42,6 @@ func (s *storage) clean() {
 	for c := range s.cq {
 		select {
 		case <-time.After(c.etime.Sub(time.Now())):
-			fmt.Println(c.key)
 			s.Delete(c.key)
 		}
 	}
