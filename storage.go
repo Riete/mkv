@@ -81,6 +81,7 @@ func (s *storage) addToClean(key string, etime time.Time) {
 }
 
 func (s *storage) set(k string, v interface{}) string {
+	s.Delete(s.keyForGet(k))
 	key := s.keyForSet(k)
 	s.storage.Store(key, v)
 	return key
