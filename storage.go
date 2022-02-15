@@ -8,7 +8,6 @@ import (
 
 var (
 	defaultTTL      = 5 * time.Minute
-	infTTL          = 9999 * time.Minute
 	keyNotExitError = errors.New("key is not exist")
 )
 
@@ -18,54 +17,43 @@ type KVStorage interface {
 	Get(key string) (interface{}, error)
 	Delete(key string)
 	Set(key string, value interface{})
-	SetEX(key string, value interface{}, ttl time.Duration)
-	SetNX(key string) bool
-	TTL(key string) (time.Duration, error)
-	IncTTL(key string, ttl time.Duration) error
-	DecTTL(key string, ttl time.Duration) error
+	SetWithExTime(key string, value interface{}, ttl time.Duration)
+	SetIfNotExist(key string, value interface{}) bool
+}
+
+type clean struct {
+	key   string
+	etime time.Time
 }
 
 type storage struct {
 	storage sync.Map
 	ttl     time.Duration
-}
-
-type value struct {
-	data  interface{}
-	etime time.Time
+	cq      chan clean
 }
 
 func (s *storage) clean() {
-	for {
-		time.Sleep(s.ttl)
-		s.storage.Range(func(k, v interface{}) bool {
-			d := v.(*value)
-			if time.Now().After(d.etime) {
-				s.storage.Delete(k)
-			}
-			return true
-		})
+	for c := range s.cq {
+		select {
+		case <-time.After(c.etime.Sub(time.Now())):
+			s.Delete(c.key)
+		}
 	}
 }
 
-func (s *storage) get(k string) (*value, error) {
+func (s *storage) get(k string) (interface{}, error) {
 	v, ok := s.storage.Load(k)
 	if !ok {
 		return nil, keyNotExitError
 	}
-	d := v.(*value)
-	if time.Now().After(d.etime) {
-		s.storage.Delete(k)
-		return nil, keyNotExitError
-	}
-	return d, nil
+	return v, nil
 }
 
 func (s *storage) Get(k string) (interface{}, error) {
 	if v, err := s.get(k); err != nil {
 		return nil, err
 	} else {
-		return v.data, nil
+		return v, nil
 	}
 }
 
@@ -73,50 +61,30 @@ func (s *storage) Delete(k string) {
 	s.storage.Delete(k)
 }
 
+func (s *storage) addToClean(key string, etime time.Time) {
+	s.cq <- clean{key: key, etime: etime}
+}
+
 func (s *storage) Set(k string, v interface{}) {
-	d := &value{data: v, etime: time.Now().Add(s.ttl)}
-	s.storage.Store(k, d)
+	s.storage.Store(k, v)
+	go s.addToClean(k, time.Now().Add(s.ttl))
 }
 
-func (s *storage) SetEX(k string, v interface{}, ttl time.Duration) {
-	d := &value{data: v, etime: time.Now().Add(ttl)}
-	s.storage.Store(k, d)
+func (s *storage) SetWithExTime(k string, v interface{}, ttl time.Duration) {
+	s.storage.Store(k, v)
+	go s.addToClean(k, time.Now().Add(ttl))
 }
 
-func (s *storage) SetNX(k string) bool {
-	d := &value{data: "", etime: time.Now().Add(infTTL)}
-	_, loaded := s.storage.LoadOrStore(k, d)
+func (s *storage) SetIfNotExist(k string, v interface{}) bool {
+	_, loaded := s.storage.LoadOrStore(k, v)
+	if !loaded {
+		go s.addToClean(k, time.Now().Add(s.ttl))
+	}
 	return !loaded
 }
 
-func (s *storage) TTL(k string) (time.Duration, error) {
-	if v, err := s.get(k); err != nil {
-		return 0, err
-	} else {
-		return v.etime.Sub(time.Now()), nil
-	}
-}
-
-func (s *storage) adjTTL(k string, ttl time.Duration) error {
-	if v, err := s.get(k); err != nil {
-		return err
-	} else {
-		v.etime = v.etime.Add(ttl)
-		s.storage.Store(k, v)
-		return nil
-	}
-}
-
-func (s *storage) IncTTL(k string, ttl time.Duration) error {
-	return s.adjTTL(k, ttl)
-}
-
-func (s *storage) DecTTL(k string, ttl time.Duration) error {
-	return s.adjTTL(k, -ttl)
-}
-
 func NewKVStorage(ttl time.Duration) KVStorage {
-	s := &storage{ttl: ttl}
+	s := &storage{ttl: ttl, cq: make(chan clean, 10000)}
 	go s.clean()
 	return s
 }
