@@ -3,6 +3,7 @@ package mkv
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +21,7 @@ type KVStorage interface {
 	Set(key string, value interface{})
 	SetWithExTime(key string, value interface{}, ttl time.Duration)
 	SetIfNotExist(key string, value interface{}) bool
+	Keys() []string
 }
 
 type clean struct {
@@ -43,6 +45,11 @@ func (s *storage) clean() {
 		select {
 		case <-time.After(c.etime.Sub(time.Now())):
 			s.Delete(c.key)
+			k := strings.Split(c.key, "-")
+			key := strings.Join(k[0:len(k)-1], "-")
+			rw.Lock()
+			delete(version, key)
+			rw.Unlock()
 		}
 	}
 }
@@ -104,6 +111,16 @@ func (s *storage) SetIfNotExist(k string, v interface{}) bool {
 	} else {
 		return false
 	}
+}
+
+func (s *storage) Keys() []string {
+	rw.RLock()
+	defer rw.RUnlock()
+	var keys []string
+	for key := range version {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func NewKVStorage(ttl time.Duration) KVStorage {
