@@ -3,7 +3,6 @@ package mkv
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 )
@@ -25,8 +24,9 @@ type KVStorage interface {
 }
 
 type clean struct {
-	key   string
-	etime time.Time
+	verKey string
+	oriKey string
+	etime  time.Time
 }
 
 type storage struct {
@@ -44,71 +44,82 @@ func (s *storage) clean() {
 	for c := range s.cq {
 		select {
 		case <-time.After(c.etime.Sub(time.Now())):
-			s.Delete(c.key)
-			k := strings.Split(c.key, "-")
-			oriKey := strings.Join(k[0:len(k)-1], "-")
-			if s.keyForGet(oriKey) == c.key {
-				rw.Lock()
-				delete(version, oriKey)
-				rw.Unlock()
-			}
+			s.delete(c.oriKey, c.verKey)
 		}
 	}
 }
 
-func (s *storage) keyForGet(k string) string {
+func (s *storage) keyForGet(oriKey string) string {
 	rw.RLock()
 	defer rw.RUnlock()
-	return fmt.Sprintf("%s-%d", k, version[k])
+	return fmt.Sprintf("%s-%d", oriKey, version[oriKey])
 }
 
-func (s *storage) keyForSet(k string) string {
+func (s *storage) keyForSet(oriKey string) string {
 	rw.Lock()
 	defer rw.Unlock()
-	version[k] = version[k] + 1
-	return fmt.Sprintf("%s-%d", k, version[k])
+	version[oriKey] = version[oriKey] + 1
+	return fmt.Sprintf("%s-%d", oriKey, version[oriKey])
 }
 
-func (s *storage) get(k string) (interface{}, error) {
-	v, ok := s.storage.Load(s.keyForGet(k))
+func (s *storage) get(oriKey string) (interface{}, error) {
+	v, ok := s.storage.Load(s.keyForGet(oriKey))
 	if !ok {
 		return nil, keyNotExitError
 	}
 	return v, nil
 }
 
-func (s *storage) Get(k string) (interface{}, error) {
-	return s.get(k)
+func (s *storage) Get(oriKey string) (interface{}, error) {
+	return s.get(oriKey)
 }
 
-func (s *storage) Delete(k string) {
-	s.storage.Delete(k)
+func (s *storage) delete(oriKey, verKey string) {
+	s.storage.Delete(verKey)
+	s.deleteKey(oriKey, verKey)
 }
 
-func (s *storage) addToClean(key string, etime time.Time) {
-	s.cq <- clean{key: key, etime: etime}
+func (s *storage) deleteKey(oriKey, verKey string) {
+	if s.keyForGet(oriKey) == verKey {
+		rw.Lock()
+		defer rw.Unlock()
+		delete(version, oriKey)
+	}
 }
 
-func (s *storage) set(k string, v interface{}) string {
-	s.Delete(s.keyForGet(k))
-	key := s.keyForSet(k)
-	s.storage.Store(key, v)
-	return key
+func (s *storage) Delete(oriKey string) {
+	s.delete(oriKey, s.keyForGet(oriKey))
 }
 
-func (s *storage) Set(k string, v interface{}) {
-	key := s.set(k, v)
-	go s.addToClean(key, time.Now().Add(s.ttl))
+func (s *storage) addToClean(oriKey, verKey string, etime time.Time) {
+	s.cq <- clean{oriKey: oriKey, verKey: verKey, etime: etime}
 }
 
-func (s *storage) SetWithExTime(k string, v interface{}, ttl time.Duration) {
-	key := s.set(k, v)
-	go s.addToClean(key, time.Now().Add(ttl))
+func (s *storage) set(oriKey string, v interface{}) string {
+	rw.RLock()
+	ver := version[oriKey]
+	rw.RUnlock()
+	if ver != 0 {
+		s.delete(oriKey, s.keyForGet(oriKey))
+	}
+	verKey := s.keyForSet(oriKey)
+	s.storage.Store(verKey, v)
+	return verKey
 }
 
-func (s *storage) SetIfNotExist(k string, v interface{}) bool {
-	if _, err := s.Get(k); err != nil {
-		s.Set(k, v)
+func (s *storage) Set(oriKey string, v interface{}) {
+	verKey := s.set(oriKey, v)
+	go s.addToClean(oriKey, verKey, time.Now().Add(s.ttl))
+}
+
+func (s *storage) SetWithExTime(oriKey string, v interface{}, ttl time.Duration) {
+	verKey := s.set(oriKey, v)
+	go s.addToClean(oriKey, verKey, time.Now().Add(ttl))
+}
+
+func (s *storage) SetIfNotExist(oriKey string, v interface{}) bool {
+	if _, err := s.Get(oriKey); err != nil {
+		s.Set(oriKey, v)
 		return true
 	} else {
 		return false
