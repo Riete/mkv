@@ -46,10 +46,12 @@ func (s *storage) clean() {
 		case <-time.After(c.etime.Sub(time.Now())):
 			s.Delete(c.key)
 			k := strings.Split(c.key, "-")
-			key := strings.Join(k[0:len(k)-1], "-")
-			rw.Lock()
-			delete(version, key)
-			rw.Unlock()
+			oriKey := strings.Join(k[0:len(k)-1], "-")
+			if s.keyForGet(oriKey) == c.key {
+				rw.Lock()
+				delete(version, oriKey)
+				rw.Unlock()
+			}
 		}
 	}
 }
