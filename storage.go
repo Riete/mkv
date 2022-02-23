@@ -33,12 +33,9 @@ type storage struct {
 	storage sync.Map
 	ttl     time.Duration
 	cq      chan clean
-}
-
-var (
-	version = map[string]int64{}
+	version map[string]int64
 	rw      sync.RWMutex
-)
+}
 
 func (s *storage) clean() {
 	for c := range s.cq {
@@ -50,16 +47,16 @@ func (s *storage) clean() {
 }
 
 func (s *storage) keyForGet(oriKey string) string {
-	rw.RLock()
-	defer rw.RUnlock()
-	return fmt.Sprintf("%s-%d", oriKey, version[oriKey])
+	s.rw.RLock()
+	defer s.rw.RUnlock()
+	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey])
 }
 
 func (s *storage) keyForSet(oriKey string) string {
-	rw.Lock()
-	defer rw.Unlock()
-	version[oriKey] = version[oriKey] + 1
-	return fmt.Sprintf("%s-%d", oriKey, version[oriKey])
+	s.rw.Lock()
+	defer s.rw.Unlock()
+	s.version[oriKey] = s.version[oriKey] + 1
+	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey])
 }
 
 func (s *storage) get(oriKey string) (interface{}, error) {
@@ -81,9 +78,9 @@ func (s *storage) delete(oriKey, verKey string) {
 
 func (s *storage) deleteKey(oriKey, verKey string) {
 	if s.keyForGet(oriKey) == verKey {
-		rw.Lock()
-		defer rw.Unlock()
-		delete(version, oriKey)
+		s.rw.Lock()
+		defer s.rw.Unlock()
+		delete(s.version, oriKey)
 	}
 }
 
@@ -96,9 +93,9 @@ func (s *storage) addToClean(oriKey, verKey string, etime time.Time) {
 }
 
 func (s *storage) set(oriKey string, v interface{}) string {
-	rw.RLock()
-	ver := version[oriKey]
-	rw.RUnlock()
+	s.rw.RLock()
+	ver := s.version[oriKey]
+	s.rw.RUnlock()
 	if ver != 0 {
 		s.delete(oriKey, s.keyForGet(oriKey))
 	}
@@ -127,17 +124,17 @@ func (s *storage) SetIfNotExist(oriKey string, v interface{}) bool {
 }
 
 func (s *storage) Keys() []string {
-	rw.RLock()
-	defer rw.RUnlock()
+	s.rw.RLock()
+	defer s.rw.RUnlock()
 	var keys []string
-	for key := range version {
+	for key := range s.version {
 		keys = append(keys, key)
 	}
 	return keys
 }
 
 func NewKVStorage(ttl time.Duration) KVStorage {
-	s := &storage{ttl: ttl, cq: make(chan clean, 10000)}
+	s := &storage{ttl: ttl, cq: make(chan clean, 10000), version: make(map[string]int64)}
 	go s.clean()
 	return s
 }
