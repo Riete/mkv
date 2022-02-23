@@ -41,7 +41,8 @@ func (s *storage) clean() {
 	for c := range s.cq {
 		select {
 		case <-time.After(c.etime.Sub(time.Now())):
-			s.delete(c.oriKey, c.verKey)
+			s.delete(c.verKey)
+			s.deleteKey(c.oriKey, c.verKey)
 		}
 	}
 }
@@ -71,9 +72,8 @@ func (s *storage) Get(oriKey string) (interface{}, error) {
 	return s.get(oriKey)
 }
 
-func (s *storage) delete(oriKey, verKey string) {
+func (s *storage) delete(verKey string) {
 	s.storage.Delete(verKey)
-	s.deleteKey(oriKey, verKey)
 }
 
 func (s *storage) deleteKey(oriKey, verKey string) {
@@ -85,7 +85,7 @@ func (s *storage) deleteKey(oriKey, verKey string) {
 }
 
 func (s *storage) Delete(oriKey string) {
-	s.delete(oriKey, s.keyForGet(oriKey))
+	s.delete(s.keyForGet(oriKey))
 }
 
 func (s *storage) addToClean(oriKey, verKey string, etime time.Time) {
@@ -97,7 +97,7 @@ func (s *storage) set(oriKey string, v interface{}) string {
 	ver := s.version[oriKey]
 	s.rw.RUnlock()
 	if ver != 0 {
-		s.delete(oriKey, s.keyForGet(oriKey))
+		s.delete(s.keyForGet(oriKey))
 	}
 	verKey := s.keyForSet(oriKey)
 	s.storage.Store(verKey, v)
