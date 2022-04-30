@@ -29,11 +29,24 @@ type clean struct {
 	etime  time.Time
 }
 
+type version struct {
+	id       int64
+	isDelete bool
+}
+
+func (v *version) newVersion() {
+	v.id += 1
+}
+
+func (v *version) delete() {
+	v.isDelete = true
+}
+
 type storage struct {
 	storage sync.Map
 	ttl     time.Duration
 	cq      chan clean
-	version map[string]int64
+	version map[string]version
 	rw      sync.RWMutex
 }
 
@@ -50,14 +63,16 @@ func (s *storage) clean() {
 func (s *storage) keyForGet(oriKey string) string {
 	s.rw.RLock()
 	defer s.rw.RUnlock()
-	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey])
+	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey].id)
 }
 
 func (s *storage) keyForSet(oriKey string) string {
 	s.rw.Lock()
 	defer s.rw.Unlock()
-	s.version[oriKey] = s.version[oriKey] + 1
-	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey])
+	v := s.version[oriKey]
+	v.newVersion()
+	s.version[oriKey] = v
+	return fmt.Sprintf("%s-%d", oriKey, s.version[oriKey].id)
 }
 
 func (s *storage) get(oriKey string) (interface{}, error) {
@@ -86,32 +101,28 @@ func (s *storage) deleteKey(oriKey, verKey string) {
 
 func (s *storage) Delete(oriKey string) {
 	s.delete(s.keyForGet(oriKey))
+	s.rw.Lock()
+	defer s.rw.Unlock()
+	v := s.version[oriKey]
+	v.delete()
+	s.version[oriKey] = v
 }
 
 func (s *storage) addToClean(oriKey, verKey string, etime time.Time) {
 	s.cq <- clean{oriKey: oriKey, verKey: verKey, etime: etime}
 }
 
-func (s *storage) set(oriKey string, v interface{}) string {
-	s.rw.RLock()
-	ver := s.version[oriKey]
-	s.rw.RUnlock()
-	if ver != 0 {
-		s.delete(s.keyForGet(oriKey))
-	}
-	verKey := s.keyForSet(oriKey)
+func (s *storage) set(oriKey, verKey string, v interface{}, ttl time.Duration) {
+	go s.addToClean(oriKey, verKey, time.Now().Add(ttl))
 	s.storage.Store(verKey, v)
-	return verKey
 }
 
 func (s *storage) Set(oriKey string, v interface{}) {
-	verKey := s.set(oriKey, v)
-	go s.addToClean(oriKey, verKey, time.Now().Add(s.ttl))
+	s.set(oriKey, s.keyForSet(oriKey), v, s.ttl)
 }
 
 func (s *storage) SetWithExTime(oriKey string, v interface{}, ttl time.Duration) {
-	verKey := s.set(oriKey, v)
-	go s.addToClean(oriKey, verKey, time.Now().Add(ttl))
+	s.set(oriKey, s.keyForSet(oriKey), v, ttl)
 }
 
 func (s *storage) SetIfNotExist(oriKey string, v interface{}) bool {
@@ -127,14 +138,16 @@ func (s *storage) Keys() []string {
 	s.rw.RLock()
 	defer s.rw.RUnlock()
 	var keys []string
-	for key := range s.version {
-		keys = append(keys, key)
+	for key, value := range s.version {
+		if !value.isDelete {
+			keys = append(keys, key)
+		}
 	}
 	return keys
 }
 
 func NewKVStorage(ttl time.Duration) KVStorage {
-	s := &storage{ttl: ttl, cq: make(chan clean, 10000), version: make(map[string]int64)}
+	s := &storage{ttl: ttl, cq: make(chan clean, 10000), version: make(map[string]version)}
 	go s.clean()
 	return s
 }
