@@ -114,6 +114,12 @@ func (s *storage) addToClean(oriKey, verKey string, etime time.Time) {
 
 func (s *storage) set(oriKey, verKey string, v interface{}, ttl time.Duration) {
 	go s.addToClean(oriKey, verKey, time.Now().Add(ttl))
+	s.rw.RLock()
+	defer s.rw.RUnlock()
+	ver := s.version[oriKey]
+	if ver.id > 1 {
+		s.delete(fmt.Sprintf("%s-%d", oriKey, ver.id-1))
+	}
 	s.storage.Store(verKey, v)
 }
 
