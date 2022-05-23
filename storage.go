@@ -36,6 +36,7 @@ type version struct {
 
 func (v *version) newVersion() {
 	v.id += 1
+	v.isDelete = false
 }
 
 func (v *version) delete() {
