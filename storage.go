@@ -57,6 +57,8 @@ func (s *storage) clean() {
 		case <-time.After(c.etime.Sub(time.Now())):
 			s.delete(c.verKey)
 			s.deleteKey(c.oriKey, c.verKey)
+		case <-time.After(s.ttl):
+			s.cq <- c
 		}
 	}
 }
