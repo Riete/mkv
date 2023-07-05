@@ -52,12 +52,20 @@ type storage struct {
 }
 
 func (s *storage) clean() {
+	etime := time.NewTimer(time.Second)
+	ttl := time.NewTimer(time.Second)
+	defer etime.Stop()
+	defer ttl.Stop()
+
 	for c := range s.cq {
+		etime.Reset(time.Until(c.etime))
+		ttl.Reset(s.ttl)
+
 		select {
-		case <-time.After(c.etime.Sub(time.Now())):
+		case <-etime.C:
 			s.delete(c.verKey)
 			s.deleteKey(c.oriKey, c.verKey)
-		case <-time.After(s.ttl):
+		case <-ttl.C:
 			s.cq <- c
 		}
 	}
