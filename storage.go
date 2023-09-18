@@ -59,7 +59,11 @@ func (k *KVStorage[T]) Keys() (keys []string) {
 }
 
 func (k *KVStorage[T]) clean() {
-	active := time.NewTicker(k.ttl)
+	maxInterval := 5 * time.Minute
+	if k.ttl < maxInterval {
+		maxInterval = k.ttl
+	}
+	active := time.NewTicker(maxInterval)
 	defer active.Stop()
 	for {
 		<-active.C
