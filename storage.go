@@ -59,7 +59,7 @@ func (k *KVStorage[T]) Keys() (keys []string) {
 }
 
 func (k *KVStorage[T]) clean() {
-	maxInterval := 5 * time.Minute
+	maxInterval := time.Minute
 	if k.ttl < maxInterval {
 		maxInterval = k.ttl
 	}
