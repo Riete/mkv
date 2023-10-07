@@ -2,8 +2,14 @@ package mkv
 
 import (
 	"errors"
+	"maps"
 	"sync"
 	"time"
+)
+
+const (
+	copyFactor  = 10
+	minDeletion = 10000
 )
 
 var keyNotExitError = errors.New("key is not exist")
@@ -13,6 +19,7 @@ type KVStorage[T any] struct {
 	l   sync.RWMutex
 	t   map[string]time.Time
 	s   map[string]T
+	d   int // deletion count
 }
 
 func (k *KVStorage[T]) Get(key string) (T, error) {
@@ -32,11 +39,18 @@ func (k *KVStorage[T]) Set(key string, v T) {
 	k.s[key] = v
 }
 
+func (k *KVStorage[T]) delete(key string) {
+	delete(k.t, key)
+	delete(k.s, key)
+	k.d++
+}
+
 func (k *KVStorage[T]) Delete(key string) {
 	k.l.Lock()
 	defer k.l.Unlock()
-	delete(k.t, key)
-	delete(k.s, key)
+	if _, ok := k.t[key]; ok {
+		k.delete(key)
+	}
 }
 
 func (k *KVStorage[T]) SetIfNotExist(key string, v T) bool {
@@ -66,9 +80,13 @@ func (k *KVStorage[T]) clean() {
 		k.l.Lock()
 		for key, etime := range k.t {
 			if time.Now().After(etime) {
-				delete(k.t, key)
-				delete(k.s, key)
+				k.delete(key)
 			}
+		}
+		if k.d > minDeletion && len(k.t)*copyFactor < k.d {
+			k.t = maps.Clone(k.t)
+			k.s = maps.Clone(k.s)
+			k.d = 0
 		}
 		k.l.Unlock()
 	}
